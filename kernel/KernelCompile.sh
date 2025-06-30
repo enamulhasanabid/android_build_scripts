@@ -33,12 +33,18 @@ JOBS=$(nproc --all)
 
 # AnyKernel3 Configuration Variables
 AK3_KERNEL_STRING="Darkmoon"
-AK3_DO_DEVICECHECK=1
 AK3_DEVICE_NAME1="moonstone"
 AK3_DEVICE_NAME2="sunstone"
-AK3_DEVICE_NAME3="gemstone"
-AK3_DEVICE_NAME4="stone"
+AK3_DEVICE_NAME3="stone"
+AK3_DEVICE_NAME4=
 AK3_DO_CLEANUP=1
+AK3_DO_CLEANUP_UPON_ABORT=0
+AK3_DO_DEVICECHECK=1
+AK3_DO_MODULES=0
+AK3_DO_SYSTEMLESS=1
+AK3_SUPPORTED_VERSION=
+AK3_SUPPORTED_PATCHLEVELS=
+
 
 # =============================================
 # PRE-BUILD SETUP
@@ -113,6 +119,11 @@ device.name2=$AK3_DEVICE_NAME2
 device.name3=$AK3_DEVICE_NAME3
 device.name4=$AK3_DEVICE_NAME4
 do.cleanup=$AK3_DO_CLEANUP
+do.cleanuponabort=$AK3_DO_CLEANUP_UPON_ABORT
+supported.versions=$AK3_SUPPORTED_VERSION
+supported.patchlevels=$AK3_SUPPORTED_PATCHLEVELS
+do.modules=$AK3_DO_MODULES
+do.systemless=$AK3_DO_SYSTEMLESS
 '; }
 # end properties
 
@@ -205,6 +216,7 @@ fi
 echo "Copying build artifacts..."
 cp -v "$OUTPUT_DIR/arch/arm64/boot/Image" "$ANYKERNEL_DIR/"
 [ -f "$OUTPUT_DIR/arch/arm64/boot/dtbo.img" ] && cp -v "$OUTPUT_DIR/arch/arm64/boot/dtbo.img" "$ANYKERNEL_DIR/"
+[ -f "$OUTPUT_DIR/arch/arm64/boot/dtb.img" ] && cp -v "$OUTPUT_DIR/arch/arm64/boot/dtb.img" "$ANYKERNEL_DIR/"
 
 echo "Creating flashable zip..."
 cd "$ANYKERNEL_DIR"
