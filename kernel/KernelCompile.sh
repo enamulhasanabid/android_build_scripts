@@ -11,6 +11,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 # =============================================
@@ -36,9 +37,10 @@ echo -e "${RED}Note: This script is configured for building the 'stone' kernel.$
 echo "  If building for a different device, you'll need to modify:"
 echo "          1. The make commands (stone_defconfig, etc.)"
 echo "          2. AnyKernel3 device names and configurations"
+echo "          3. Set DEVICE_DEFCONFIG_FILE value as your defconfig location."
 echo
 echo
-echo -e "${RED}Note:To modify AnyKernel3 variables, please edit this script directly${NC}"
+echo -e "${RED}Note: To modify AnyKernel3 variables, please edit this script directly${NC}"
 echo
 echo -e "${YELLOW}Current AnyKernel3 settings:${NC}"
 echo "Kernel String: Darkmoon"
@@ -51,19 +53,51 @@ echo
 # Start build timer
 START_TIME=$(date +%s)
 
+# =============================================
+# USER PROMPTS
+# =============================================
+
 # Prompt user for kernel repository and branch
-read -p "Enter Kernel Repository URL [default: https://github.com/kamikaonashi/private_kernel_stone.git]: " KERNEL_REPO
+echo
+read -p "$(echo -e "${BOLD}${YELLOW}Enter Kernel Repository URL${NC} ${BLUE}[default: https://github.com/kamikaonashi/private_kernel_stone.git]:${NC} ")" KERNEL_REPO
 KERNEL_REPO=${KERNEL_REPO:-"https://github.com/kamikaonashi/private_kernel_stone.git"}
 
-read -p "Enter Kernel Branch [default: 16]: " KERNEL_BRANCH
+echo
+read -p "$(echo -e "${BOLD}${YELLOW}Enter Kernel Branch${NC} ${BLUE}[default: 16]:${NC} ")" KERNEL_BRANCH
 KERNEL_BRANCH=${KERNEL_BRANCH:-"16"}
 
-# Prompt for Clang URL and ZIP Name
-read -p "Enter Clang Toolchain URL [default: https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379/-/archive/15.0/android_prebuilts_clang_host_linux-x86_clang-r547379-15.0.tar.gz]: " CLANG_URL
+# Prompt for Clang URL
+echo
+read -p "$(echo -e "${BOLD}${YELLOW}Enter Clang Toolchain URL${NC} ${BLUE}[default: https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379/-/archive/15.0/android_prebuilts_clang_host_linux-x86_clang-r547379-15.0.tar.gz]:${NC} ")" CLANG_URL
 CLANG_URL=${CLANG_URL:-"https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379/-/archive/15.0/android_prebuilts_clang_host_linux-x86_clang-r547379-15.0.tar.gz"}
 
-read -p "Enter Output ZIP Name [default: stone-kernel]: " ZIP_BASE_NAME
-ZIP_BASE_NAME=${ZIP_BASE_NAME:-"stone-kernel"}
+# Prompt for KernelSU Configuration
+echo
+read -p "$(echo -e "${BOLD}${YELLOW}Enable KernelSU with SUSFS?${NC} ${BLUE}(y/N):${NC} ")" KSU_ENABLE
+KSU_ENABLE=${KSU_ENABLE:-"n"}
+
+if [[ $KSU_ENABLE == "y" || $KSU_ENABLE == "Y" ]]; then
+    KSU_ENABLED=true
+    # Set default ZIP base name for KSU builds
+    DEFAULT_ZIP_BASE_NAME="stone-kernel-KSU"
+
+    echo
+    read -p "$(echo -e "${BOLD}${YELLOW}Enter KernelSU Repository${NC} ${BLUE}[default: https://github.com/tiann/KernelSU.git]:${NC} ")" KSU_REPO
+    KSU_REPO=${KSU_REPO:-"https://github.com/tiann/KernelSU.git"}
+
+    echo
+    read -p "$(echo -e "${BOLD}${YELLOW}Enter KernelSU Branch${NC} ${BLUE}[default: main]:${NC} ")" KSU_BRANCH
+    KSU_BRANCH=${KSU_BRANCH:-"main"}
+else
+    KSU_ENABLED=false
+    # Set default ZIP base name for non-KSU builds
+    DEFAULT_ZIP_BASE_NAME="stone-kernel"
+fi
+
+# Prompt for ZIP Name (after KSU decision to set proper default)
+echo
+read -p "$(echo -e "${BOLD}${YELLOW}Enter Output ZIP Name${NC} ${BLUE}[default: $DEFAULT_ZIP_BASE_NAME]:${NC} ")" ZIP_BASE_NAME
+ZIP_BASE_NAME=${ZIP_BASE_NAME:-"$DEFAULT_ZIP_BASE_NAME"}
 ZIP_NAME="${ZIP_BASE_NAME}-$(date +%Y%m%d-%H%M).zip"
 
 KERNEL_DIR="${SOURCE_DIR}/private_kernel_stone"
@@ -71,6 +105,7 @@ ANYKERNEL_REPO="https://github.com/osm0sis/AnyKernel3.git"
 ANYKERNEL_DIR="${SOURCE_DIR}/AnyKernel3"
 ZIP_PATH="${RELEASE_DIR}/${ZIP_NAME}"
 CLANG_DIR="${SOURCE_DIR}/clang"
+SUSFS_DIR="${SOURCE_DIR}/susfs4ksu"
 
 # Configuration
 export KBUILD_BUILD_USER="android-build"
@@ -105,6 +140,11 @@ echo "Build User: $KBUILD_BUILD_USER"
 echo "Build Host: $KBUILD_BUILD_HOST"
 echo "Kernel Repo: $KERNEL_REPO"
 echo "Kernel Branch: $KERNEL_BRANCH"
+echo "KernelSU Enabled: $KSU_ENABLED"
+if [ "$KSU_ENABLED" = true ]; then
+    echo "KernelSU Repo: $KSU_REPO"
+    echo "KernelSU Branch: $KSU_BRANCH"
+fi
 echo "Build Directory: $BUILD_DIR"
 echo "Source Directory: $SOURCE_DIR"
 echo "Output Directory: $OUTPUT_DIR"
@@ -218,6 +258,103 @@ else
     cd ..
 fi
 
+# Avoid dirty uname
+touch "$KERNEL_DIR/.scmversion"
+
+# =============================================
+# KERNELSU SETUP
+# =============================================
+if [ "$KSU_ENABLED" = true ]; then
+    echo
+    echo -e "${YELLOW}Setting up KernelSU...${NC}"
+    echo
+
+    cd "$KERNEL_DIR"
+
+    # Check if we need to revert a specific commit
+    if [[ "$KERNEL_REPO" == *"kamikaonashi"* ]]; then
+        echo "Reverting commit 468ece7271fa0e77dc16e3866eb298bcd92c7273 using patch"
+        curl -s https://github.com/kamikaonashi/private_kernel_stone/commit/468ece7271fa0e77dc16e3866eb298bcd92c7273.patch | git apply -R || echo "Revert patch might have failed, but continuing..."
+    fi
+
+    # Apply SUSFS conflict prevention patch
+    echo "Applying SUSFS conflict prevention patch"
+    curl -s https://github.com/gawasvedraj/android_kernel_xiaomi_stone/commit/fa2ce4caf8470ee790d4e03e12ce237cfaa7b3ab.patch | git apply || echo "SUSFS patch might have failed, but continuing..."
+
+    # Apply KSU hook patch
+    echo "Applying KSU hook patch"
+    curl -s https://github.com/gawasvedraj/android_kernel_xiaomi_stone/commit/3a30ee3ae99ddab2e7925fe6824077db93673dcd.patch | git apply || echo "KSU hook patch might have failed, but continuing..."
+
+    # Setup KernelSU
+    echo "Setting up KernelSU from $KSU_REPO branch $KSU_BRANCH"
+
+    # Extract owner/repo from the full URL if provided
+    if [[ "$KSU_REPO" == *"github.com"* ]]; then
+        # Handle both https:// and git@ formats
+        KSU_REPO_PATH=$(echo "$KSU_REPO" | sed -E 's|https?://github.com/||; s|git@github.com:||; s|\.git$||')
+    else
+        KSU_REPO_PATH="$KSU_REPO"
+    fi
+
+    curl -LSs "https://raw.githubusercontent.com/$KSU_REPO_PATH/$KSU_BRANCH/kernel/setup.sh" | bash -s "$KSU_BRANCH"
+
+    # Check if KernelSU directory exists and apply signature patch
+    if [ -d "$KERNEL_DIR/KernelSU" ]; then
+        cd "$KERNEL_DIR/KernelSU"
+        curl -s "https://raw.githubusercontent.com/gawasvedraj/KernelOwO/master/patches/0001-Remove-unnecessary-manager-signatures.patch" | patch -p1 -F3 || echo "Signature patch might have failed, but continuing..."
+        cd "$KERNEL_DIR"
+    else
+        echo -e "${YELLOW}Warning: KernelSU directory not found${NC}"
+    fi
+
+    # Setup SuSFS
+    echo "Setting up SuSFS"
+    if [ -d "$SUSFS_DIR" ]; then
+        rm -rf "$SUSFS_DIR"
+    fi
+    git clone --depth=1 "https://gitlab.com/simonpunk/susfs4ksu" -b "kernel-5.4" "$SUSFS_DIR" || echo "SuSFS clone failed, but continuing..."
+
+    if [ -d "$SUSFS_DIR" ]; then
+        cp -v "$SUSFS_DIR/kernel_patches/fs/"* "$KERNEL_DIR/fs/" 2>/dev/null || true
+        cp -v "$SUSFS_DIR/kernel_patches/include/linux/"* "$KERNEL_DIR/include/linux/" 2>/dev/null || true
+        patch -p1 -F3 --batch < "$SUSFS_DIR/kernel_patches/50_add_susfs_in_kernel-5.4.patch" || echo "SuSFS patch might have failed, but continuing..."
+    fi
+
+    # Update defconfig
+    DEVICE_DEFCONFIG_FILE="$KERNEL_DIR/arch/arm64/configs/stone_defconfig"
+    echo "CONFIG_KSU=y" >> "$DEVICE_DEFCONFIG_FILE"
+    echo "CONFIG_KSU_SUSFS=y" >> "$DEVICE_DEFCONFIG_FILE"
+    echo "CONFIG_KPROBES=n" >> "$DEVICE_DEFCONFIG_FILE"
+
+    # Get version info
+    if [ -d "$KERNEL_DIR/KernelSU" ]; then
+        KSU_GIT_VERSION=$(cd "$KERNEL_DIR/KernelSU" && git rev-list --count HEAD 2>/dev/null || echo "0")
+        KERNELSU_VERSION=$(($KSU_GIT_VERSION + 10200))
+    else
+        KERNELSU_VERSION="Unknown"
+    fi
+
+    if [ -f "$KERNEL_DIR/include/linux/susfs.h" ]; then
+        SUSFS_VERSION=$(grep "SUSFS_VERSION" "$KERNEL_DIR/include/linux/susfs.h" | cut -d '"' -f2)
+    else
+        SUSFS_VERSION="Unknown"
+    fi
+
+    echo "KernelSU Version: $KERNELSU_VERSION"
+    echo "SuSFS version: $SUSFS_VERSION"
+
+    # Update localversion
+    sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-qgki-κsu"/' "$DEVICE_DEFCONFIG_FILE"
+else
+    echo "KernelSU Disabled"
+    DEVICE_DEFCONFIG_FILE="$KERNEL_DIR/arch/arm64/configs/stone_defconfig"
+    echo "CONFIG_KSU=n" >> "$DEVICE_DEFCONFIG_FILE"
+    echo "CONFIG_KPROBES=n" >> "$DEVICE_DEFCONFIG_FILE"
+    echo "CONFIG_APATCH_SUPPORT=y" >> "$DEVICE_DEFCONFIG_FILE"
+    KERNELSU_VERSION="Disabled"
+    SUSFS_VERSION="Disabled"
+fi
+
 # =============================================
 # ANYKERNEL3 SETUP
 # =============================================
@@ -285,10 +422,8 @@ echo -e "${YELLOW}Configuring kernel...${NC}"
 echo
 
 # Clean thoroughly
-make ARCH=arm64 distclean
-make ARCH=arm64 mrproper
-git clean -fdx
-git reset --hard
+#make ARCH=arm64 distclean
+#make ARCH=arm64 mrproper
 
 # Environment hardening
 export ARCH=arm64
@@ -307,10 +442,14 @@ export CROSS_COMPILE="aarch64-linux-gnu-"
 export CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
 
 # Make Config
-echo "CONFIG_LOCALVERSION=\"-secure\"" > "$OUTPUT_DIR/.config"
 if ! make O="$OUTPUT_DIR" stone_defconfig; then
     echo -e "${RED}Error: Failed to configure kernel${NC}"
     exit 1
+fi
+
+# Set localversion if KernelSU is disabled
+if [ "$KSU_ENABLED" = false ]; then
+    echo "CONFIG_LOCALVERSION=\"-secure\"" >> "$OUTPUT_DIR/.config"
 fi
 
 # =============================================
@@ -358,6 +497,7 @@ if command -v strings &> /dev/null; then
         echo -e "${GREEN}Binary clean - no personal identifiers found${NC}"
     fi
 fi
+
 # =============================================
 # PACKAGE
 # =============================================
@@ -397,5 +537,10 @@ echo "Flashable zip created at: ${ZIP_PATH}"
 echo "File size: $(du -h "${ZIP_PATH}" | cut -f1)"
 echo "Build User: $KBUILD_BUILD_USER"
 echo "Build Host: $KBUILD_BUILD_HOST"
+echo "KernelSU: $KSU_ENABLED"
+if [ "$KSU_ENABLED" = true ]; then
+    echo "KernelSU Version: $KERNELSU_VERSION"
+    echo "SuSFS Version: $SUSFS_VERSION"
+fi
 echo "Build duration: $(($(date +%s) - START_TIME)) seconds"
 echo
