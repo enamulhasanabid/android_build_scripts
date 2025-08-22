@@ -298,11 +298,15 @@ if [ "$KSU_ENABLED" = true ]; then
 
     curl -LSs "https://raw.githubusercontent.com/$KSU_REPO_PATH/$KSU_BRANCH/kernel/setup.sh" | bash -s "$KSU_BRANCH"
 
-    # Check if KernelSU directory exists and apply signature patch
+    # Check if KernelSU directory exists and apply signature patch (skip if repo contains next)
     if [ -d "$KERNEL_DIR/KernelSU" ]; then
-        cd "$KERNEL_DIR/KernelSU"
-        curl -s "https://raw.githubusercontent.com/gawasvedraj/KernelOwO/master/patches/0001-Remove-unnecessary-manager-signatures.patch" | patch -p1 -F3 || echo "Signature patch might have failed, but continuing..."
-        cd "$KERNEL_DIR"
+        if [[ "$KSU_REPO" != *next* ]]; then
+            cd "$KERNEL_DIR/KernelSU"
+            curl -s "https://raw.githubusercontent.com/gawasvedraj/KernelOwO/master/patches/0001-Remove-unnecessary-manager-signatures.patch" | patch -p1 -F3 || echo "Signature patch might have failed, but continuing..."
+            cd "$KERNEL_DIR"
+        else
+            echo "Skipping signature patch for next branch"
+        fi
     else
         echo -e "${YELLOW}Warning: KernelSU directory not found${NC}"
     fi
