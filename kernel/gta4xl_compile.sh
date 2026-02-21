@@ -273,6 +273,52 @@ fi
 touch "$KERNEL_DIR/.scmversion"
 
 # =============================================
+# APPLY ABOX VSS FIX PATCH
+# =============================================
+echo
+echo -e "${YELLOW}Applying abox_vss fix patch...${NC}"
+echo
+
+PATCH_FILE="${SCRIPT_DIR}/abox_vss_fix.patch"
+cat > "$PATCH_FILE" << 'EOF'
+diff --git a/sound/soc/samsung/abox/abox_vss.c b/sound/soc/samsung/abox/abox_vss.c
+index 270c65e50..1c81ba17b 100644
+--- a/sound/soc/samsung/abox/abox_vss.c
++++ b/sound/soc/samsung/abox/abox_vss.c
+@@ -31,6 +31,12 @@ static int samsung_abox_vss_probe(struct platform_device *pdev)
+
+ 		of_property_read_u32(np, "magic_offset", &VSS_MAGIC_OFFSET);
+ 		dev_info(dev, "magic_offset = 0x%08X\n", VSS_MAGIC_OFFSET);
++
++		if (shm_get_vss_base() == 0) {
++			dev_err(dev, "Hardware failed earlier, safely aborting!\n");
++			return -ENODEV;
++		}
++
+ 		magic_addr = phys_to_virt(shm_get_vss_base() + VSS_MAGIC_OFFSET);
+ 		writel(0, magic_addr);
+ 	} else
+EOF
+
+cd "$KERNEL_DIR"
+# Try git apply first
+if git apply --check "$PATCH_FILE" 2>/dev/null; then
+    git apply "$PATCH_FILE"
+    echo -e "${GREEN}Patch applied successfully with git.${NC}"
+else
+    # Fallback to patch command
+    if patch -p1 --dry-run < "$PATCH_FILE" 2>/dev/null; then
+        patch -p1 < "$PATCH_FILE"
+        echo -e "${GREEN}Patch applied successfully with patch.${NC}"
+    else
+        echo -e "${RED}Error: Failed to apply abox_vss fix patch.${NC}"
+        echo -e "${YELLOW}You may need to apply it manually. Continuing anyway...${NC}"
+    fi
+fi
+cd "$OLDPWD"
+rm -f "$PATCH_FILE"
+
+# =============================================
 # KERNELSU SETUP
 # =============================================
 if [ "$KSU_ENABLED" = true ]; then
